@@ -1,0 +1,270 @@
+tar -xvzf spark-2.1.0-bin-hadoop2.7.tgz
+mkdir -p /opt/spark/2.1.0
+mv spark-2.1.0-bin-hadoop2.7/* /opt/spark/2.1.0
+ln -s /opt/spark/2.1.0/ /opt/spark/current
+
+▶ vi /etc/profile
+###### spark ######
+export SPARK_HOME=/opt/spark/current
+export PATH=$PATH:$SPARK_HOME/bin
+###### spark ######
+
+source /etc/profile
+
+cd $SPARK_HOME/conf
+cp spark-env.sh.template spark-env.sh
+
+▶ vi spark-env.sh
+export JAVA_HOME=/opt/jdk/current
+export HADOOP_CONF_DIR=/opt/hadoop/current/etc/hadoop
+export SPARK_WORKER_CORES=6
+
+cp slaves.template slaves
+▶ vi slaves
+slave1
+slave2
+
+------------------------------------ 마스터에 스파크 설치
+
+ssh slave1
+mkdir -p /opt/spark/
+exit
+
+ssh slave2
+mkdir -p /opt/spark/
+exit
+
+scp -r /opt/spark/2.1.0 slave1:/opt/spark
+scp -r /opt/spark/2.1.0 slave2:/opt/spark
+
+ssh slave1
+ln -s /opt/spark/2.1.0/ /opt/spark/current
+exit
+
+ssh slave2
+ln -s /opt/spark/2.1.0/ /opt/spark/current
+exit
+
+---------------------------------- slave1,2에 scp 사용해서 파일 복사해서 밀어넣고 심볼릭 링크 설정
+
+ssh slave1
+▶ vi /etc/profile
+###### spark ######
+export SPARK_HOME=/opt/spark/current
+export PATH=$PATH:$SPARK_HOME/bin
+###### spark ######
+
+source /etc/profile
+exit
+
+ssh slave2
+▶ vi /etc/profile
+###### spark ######
+export SPARK_HOME=/opt/spark/current
+export PATH=$PATH:$SPARK_HOME/bin
+###### spark ######
+
+source /etc/profile
+exit
+
+------------------------------------ slave1,2에서 profile에 export
+
+cd $SPARK_HOME/bin
+spark-shell
+   -> scala실행
+
+import org.apache.spark.SparkConf
+import org.apache.spark.SparkContext
+import org.apache.spark.SparkContext._
+
+------------------------------------ 스파크 설정 완료 
+
+val conf = new SparkConf().setMaster("local").setAppName("test")
+val sc = new SparkContext(conf)
+
+val input = sc.textFile("/baseball/Batting.csv")
+val words = input.flatMap(line=>line.split(","))
+val counts = words.map(word=>(word,1)).reduceByKey{case(x,y) => x+y}
+counts.saveAsTextFile("/output/batting")
+
+hdfs dfs -ls /output/batting
+   -> _SUCCESS 파일과 /output/batting/part-00000 파일 생성 (word count 결과 파일)
+
+-------------------------------------- 스파크로 wordcount 실습
+
+cd $SPARK_HOME
+hdfs dfs -mkdir /input/spark
+hdfs dfs -put README.md /input/spark
+
+val inputRDD = sc.textFile("/input/spark/README.md")
+val sparkRDD = inputRDD.filter(line=>line.contains("spark"))
+val apacheRDD = inputRDD.filter(line=>line.contains("apache"))
+val unionRDD = sparkRDD.union(apacheRDD)
+
+sparkRDD.count()
+   -> 결과 : Long = 13
+apacheRDD.count()
+   -> 결과 : Long = 10
+unionRDD.count()
+   -> 결과 : Long = 23
+
+inputRDD.take(3).foreach(println)
+apacheRDD.take(3).foreach(println)
+   -> 둘다 3줄을 출력해줌. apache의 경우 apache글자가 들어가는 3줄을 출력
+
+------------------------------------------- 하둡에서 글자 찾아 등장 횟수 출력 실습
+
+val input = sc.parallelized(List(1,2,3,4))
+val input2 = List(1,2,3,4)
+   -> 뭔지모름.................................................................
+
+val result = input.map(x=>x*x)
+println(result.collect().mkString(","))
+   -> 결과 : 1,4,9,16
+
+------------------------------------------- 뭔지 잘..
+
+var rdd1 = sc.parallelize(List("coffee","coffee","tea","milk"))
+var rdd2 = sc.parallelize(List("coffee","cola", "water"))
+
+rdd1.distinct().foreach(println)
+   -> 결과 : milk coffee tea (중복 제거된 결과 출력)
+rdd1.intersection(rdd2).foreach(println)
+   -> 결과 : coffee (중복된 결과만 출력)
+rdd1.subtract(rdd2).foreach(println)
+   -> 결과 : tea milk (차집합 연산)
+
+-------------------------------------------- 집합 연산
+
+val data = sc.parallelize(List(1,2,3,4))
+data.collect()
+   -> 결과 : Array[Int] = Array(1,2,3,4)
+data.countByValue()
+   -> 결과 : scala.collection.Map[Int, Long] = Map(4->1, 1->1, 3->1, 2->1)
+
+val data1 = sc.parallelize(List(1,2,3,4,4,4))
+data1.countByValue()
+   -> 결과 : scala.collection.Map[Int, Long] = Map(4->3, 1->1, 3->1, 2->1)
+
+data.top(2)
+   -> 4 3 출력
+data.top(3)
+   -> 4 3 2 출력
+data1.top(3)
+   -> 4 4 4 출력
+
+-------------------------------------------- array
+
+import org.apache.spark.sql.SQLContext
+val sqlContext = new SQLContext(sc)
+val df = Seq(("one",1),("one",1),("two",2)).toDF("word","count")
+df.show()
+   -> word | count
+       one | 1
+       one | 1
+       two | 2
+
+df.registerTempTable("df")
+
+sqlContext.sql("select * from df").show()
+df.show()
+   -> word | count
+       one | 1
+       one | 1
+       two | 2
+
+sqlContext.sql("select word, sum(count) from df group by word").show()
+   -> word | count
+       two | 2
+       one | 1
+
+-------------------------------------------- select
+
+val sqlContext = new org.apache.spark.sql.hive.HiveContext(sc)
+sqlContext.sql("create table test (key int, value string) row format delimited fields terminated by ',' lines terminated by '\n')
+
+cd ~
+▶ vi temp
+1,"a"
+2,"b"
+3,"c"
+4,"c"
+
+sqlContext.sql("load data local inpath '/root/temp' overwrite into table test")
+sqlContext.sql("select * from test").show()
+   -> key | value
+        1 | "a"
+        2 | "b"
+        3 | "c"
+        4 | "c"
+
+------------------------------------------- hive
+
+cp /opt/hive/current/conf/hive-site.xml /opt/spark/current/conf/
+
+-------------------------------------------
+
+[master]
+cd $SPARK_HOME/sbin
+./start-master.sh
+
+[slave1, slave2]
+cd $SPARK_HOME/sbin
+./start-slave.sh spark://master:7077
+
+[master]
+cd $SPARK_HOME/bin
+./spark-shell --master spark://master:7077
+
+=> 이렇게 하면 slave에서는 jps했을때 worker, master에서는 master라는 상태가 생김
+
+------------------------------------------ master와 slave에 spark 따로 띄우기
+
+command 하나 더 열어서
+nc -lk 9999 
+
+------------------------------------------- 스트리밍을 위한 커맨드 준비
+
+import org.apache.spark._
+import org.apache.spark.streaming._
+import org.apache.spark.streaming.StreamingContext._
+
+val ssc = new StreamingContext(sc, Seconds(1))
+val lines = ssc.socketTextStream("master",9999)
+val words = lines.flatMap(_.split(" "))
+val pairs = words.map(word=>(word,1))
+val wordCounts = pairs.reduceByKey(_+_)
+wordCounts.print()
+ssc.start()
+
+=> 아까 만든 커맨드에서 글지 입력하면... 시간마다... 뭘 해줌... 잘모르겠..
+
+--------------------------------------------
+
+
+---- master
+cd /opt/spark/current/sbin/
+./start-master.sh 
+---- slave1,2 가서
+cd /opt/spark/current/sbin/
+./start-slave.sh spark://master:7077
+---- master
+cd /opt/spark/current/bin/
+./spark-shell --master spark://master:7077
+
+---- 다른 shell
+nc -lk 9999
+---- 원래 shell
+import org.apache.spark._
+import org.apache.spark.streaming._
+import org.apache.spark.streaming.StreamingContext._
+val ssc = new StreamingContext(sc, Seconds(1))
+// 9999 포트로 들어오는 데이터를 1초단위로 보겟다
+val lines = ssc.socketTextStream("master", 9999)
+val words = lines.flatMap(_.split(" "))
+val pairs = words.map(word=>(word, 1))
+val wordCounts = pairs.reduceByKey(_+_)
+wordCounts.print()
+ssc.start()
+---- 다른 shell
+abc abc

@@ -1,0 +1,222 @@
+자바 다운 주소 : http://www.oracle.com/technetwork/java/javase/downloads/jdk8-downloads-2133151.html (Linux64)
+tar -xvzf jdk-8u112-linux-x64.tar.gz
+mkdir -p /opt/jdk/1.8.0_144
+mv jdk1.8.0_144/* /opt/jdk/1.8.0_144
+ln -s /opt/jdk/1.8.0_144 /opt/jdk/current
+
+alternatives --install /usr/bin/java java /opt/jdk/1.8.0_144/bin/java 2
+alternatives --config java => 3 선택
+alternatives --install /usr/bin/jar jar /opt/jdk/1.8.0_144/bin/jar 2
+alternatives --install /usr/bin/javac javac /opt/jdk/1.8.0_144/bin/javac 2
+alternatives --set jar /opt/jdk/1.8.0_144/bin/jar
+alternatives --set javac /opt/jdk/1.8.0_144/bin/javac
+
+java -version 
+javac -version -> java, javac 버전 1.8.0_144 됐는지 확인
+
+------------------------ 자바설치
+하둡 다운 주소 : http://apache.mirror.cdnetworks.com/hadoop/common/hadoop-2.7.3/
+tar -xvzf hadoop-2.7.3.tar.gz
+mkdir -p /opt/hadoop/2.7.3
+mv hadoop-2.7.3/* /opt/hadoop/2.7.3/
+ln -s /opt/hadoop/2.7.3/ /opt/hadoop/current
+
+------------------------ 하둡설치
+
+▶ vi /etc/profile
+   ########### HADOOP ##########
+   export HADOOP_HOME=/opt/hadoop/current
+   export PATH=$PATH:$HADOOP_HOME/bin
+   export PATH=$PATH:$HADOOP_HOME/sbin
+   ########### HADOOP ##########
+   ########### JAVA ############
+   export JAVA_HOME=/opt/jdk/current
+   export PATH=$PATH:$JAVA_HOME/bin
+   ########### JAVA ############
+source /etc/profile -> 이거 실행하면 환경변수 저장됨
+cd $HADOOP_HOME -> 환경변수 설정됐는지 확인해보기
+
+-------------------------- 환경변수 설정
+
+▶ vi /etc/hostname 
+해당하는 이름 적기(master인지 slave1,2인지)
+
+▶ vi /etc/hosts 
+master slave1 slave2 아이피 적기
+
+--------------------------- master, slave1, slave2 설정
+
+rsync -av /opt/jdk/ root@slave1:/opt/jdk/
+
+--------------------------- jdk slave1, slave2에 복제
+
+[master]
+ssh-keygen -t dsa -P '' -f ~/.ssh/id_dsa
+cat ~/.ssh/id_dsa.pub >> ~/.ssh/authorized_keys
+chmod 0700 ~/.ssh/authorized_keys
+
+[slave1]
+ssh-keygen -t dsa -P '' -f ~/.ssh/id_dsa
+cat ~/.ssh/id_dsa.pub >> ~/.ssh/authorized_keys
+chmod 0700 ~/.ssh/authorized_keys
+
+[slave2]
+ssh-keygen -t dsa -P '' -f ~/.ssh/id_dsa
+cat ~/.ssh/id_dsa.pub >> ~/.ssh/authorized_keys
+chmod 0700 ~/.ssh/authorized_keys
+
+[master]
+ssh-copy-id -i ~/.ssh/id_dsa.pub root@slave1
+ssh-copy-id -i ~/.ssh/id_dsa.pub root@slave2
+
+---------------------------- 비번 안쓰고 로그인할수 있는 ssh 설정
+
+[master]
+mkdir -p /home/hadoop/hdfs/namenode
+mkdir -p /home/hadoop/hdfs/namesecondary
+
+[slave1]
+mkdir -p /home/hadoop/hdfs/datanode
+
+[slave2]
+mkdir -p /home/hadoop/hdfs/datanode
+
+----------------------------- namenode, datanode 디렉토리 설정
+
+▶ vi $HADOOP_HOME/etc/hadoop/core-site.xml
+<configuration>
+   <property>
+   <name>fs.defaultFS</name>
+   <value>hdfs://master:9000</value>
+   </property>
+</configuration>
+
+▶ vi $HADOOP_HOME/etc/hadoop/masters
+master
+
+▶ vi $HADOOP_HOME/etc/hadoop/slaves
+slave1
+slave2
+
+cp mapred-site.xml.template mapred-site.xml
+
+▶ vi $HADOOP_HOME/etc/hadoop/mapred-site.xml
+<configuration>
+   <property>
+   <name>mapreduce.framework.name</name>
+   <value>yarn</value>
+   </property>
+</configuration>
+
+▶ vi $HADOOP_HOME/etc/hadoop/hadoop-env.sh
+export JAVA_HOME=/opt/jdk/current
+
+▶ vi $HADOOP_HOME/etc/hadoop/yarn-env.sh
+export JAVA_HOME=/opt/jdk/current
+
+▶ vi $HADOOP_HOME/etc/hadoop/hdfs-site.xml
+<configuration>
+   <property>
+      <name>dfs.replication</name>
+      <value>2</value>
+   </property>
+   <property>
+      <name>dfs.namenode.name.dir</name>
+      <value>file:/home/hadoop/hdfs/namenode</value>
+   </property>
+   <property>
+      <name>dfs.datanode.data.dir</name>
+      <value>file:/home/hadoop/hdfs/datanode</value>
+   </property>
+   <property>
+      <name>dfs.namenode.http-address</name>
+      <value>master:50070</value>
+   </property>
+   <property>
+      <name>dfs.namenode.secondary.http-address</name>
+      <value>master:50090</value>
+   </property>
+   <property>
+      <name>dfs.namenode.checkpoint.dir</name>
+      <value>file:/home/hadoop/hdfs/namesecondary</value>
+   </property>
+</configuration>
+▶ vi $HADOOP_HOME/etc/hadoop/yarn-site.xml
+<configuration>
+   <property>
+      <name>yarn.nodemanager.aux-services</name>
+      <value>mapreduce_shuffle</value>
+   </property>
+   <property>
+      <name>yarn.nodemanager.aux-services.mapreduce.shuffle.class</name>
+      <value>org.apache.hadoop.mapred.ShuffleHandler</value>
+   </property>
+   <property>
+      <name>yarn.resourcemanager.scheduler.address</name>
+      <value>master:8030</value>
+   </property>
+   <property>
+      <name>yarn.resourcemanager.resource-tracker.address</name>
+      <value>master:8031</value>
+   </property>
+   <property>
+      <name>yarn.resourcemanager.address</name>
+      <value>master:8032</value>
+   </property>
+   <property>
+      <name>yarn.resourcemanager.hostname</name>
+      <value>master</value>
+   </property>
+</configuration>
+
+------------------------------------- 하둡 설정파일 완료
+
+rsync -av /opt/hadoop/ root@slave1:/opt/hadoop
+rsync -av /opt/hadoop/ root@slave2:/opt/hadoop
+
+------------------------------------- slave1,2에 하둡파일 복제하여 밀어넣기
+
+[master, slave1, slave2 모두 설정]
+systemctl stop firewalld.service
+systemctl disable firewalld.service -> 방화벽 해제 및 재부팅해도 계속 해제 상태로 설정
+
+------------------------------------- 방화벽 해제 
+
+hadoop namenode -format
+start-all.sh
+jps
+
+--------------------------------------- 하둡 실행 방법
+
+/////////////////////// 하둡 명령어 //////////////////////////
+
+cd $HADOOP_HOME
+hadoop dfs -mkdir /input
+hadoop dfs -put LICENSE.txt /input
+cd share/hadoop/mapreduce
+hadoop jar hadoop-mapreduce-examples-2.7.3.jar wordcount /input/LICENSE.txt output 
+   -> 여기까지 하면 master:50070에서 /user/root/output에 파일 생긴거 확인가능
+hadoop dfs -get /user/root/output/part-r-00000
+   -> 여기까지 하면 root@master mapreduce에서 vi로 파일 열수 있게됨
+
+------------------
+
+cd $HADOOP_HOME
+hadoop dfs -copyFromLocal README.txt /input/
+   -> 하둡의 /input/밑에 README.txt 파일이 복사됨
+hadoop dfs -copyToLocal /input/README.txt ../
+   -> 하둡에서 $HADOOP_HOME의 바로 부모 디렉토리에 README.txt 파일이 복사됨
+hadoop dfs -cp /input/README.txt /user/root/output
+   -> output 디렉토리에 README.txt 파일이 복사됨
+hadoop dfs -df /input
+   -> input 폴더의 사용가능 용량 파악 가능
+hadoop dfs -df -h /input
+   -> input 폴더의 사용가능 용량을 기가 단위로 볼수 있음
+hadoop dfs -du /input
+   -> input 폴더에 들어있는 파일의 크기 파악 가능
+hadoop dfs -du -h /input
+   -> input 폴더에 들어있는 파일의 크기를 기가 단위로 파악 가능
+hadoop dfs -mv /user/root/output/README.txt /
+   -> output 폴더에 있던 README.txt 파일을 / 밑으로 이동
+hadoop dfs -rm /README.txt
+   -> / 밑에 있던 README.txt 파일을 삭제

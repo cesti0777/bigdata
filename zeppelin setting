@@ -1,0 +1,13 @@
+----zeppelin-----
+tar zxvf zeppelin-0.7.2-bin-all.tgz
+mkdir -p /opt/zeppelin/0.7.2
+mv zeppelin-0.7.2-bin-all/* /opt/zeppelin/0.7.2/
+cd /opt/zeppelin/
+ln -s 0.7.2/ current
+cd /opt/zeppelin/current/conf/
+cp zeppelin-env.sh.template zeppelin-env.sh
+vi zeppelin-env.sh
+cp zeppelin-site.xml.template zeppelin-site.xml
+vi zeppelin-site.xml
+cd /opt/zeppelin/current/bin
+./zeppelin-daemon.sh start

@@ -1,0 +1,273 @@
+////////////////////////////// mysql 설치 //////////////
+
+yum install mariadb-server mariadb
+systemctl enable mariadb.service
+systemctl start mariadb.service
+mysql_secure_installation
+   -> 여기까지 하면 mariadb 설치 완료
+▶ vi /etc/my.cnf 
+bind-address=IP주소
+   -> mysql 설정파일
+
+cd ~
+cd 다운로드
+tar -xvzf apache-hive-2.1.1-bin.tar.gz
+mkdir -p /opt/hive/2.1.1
+mv apache-hive-2.1.1-bin/* /opt/hive/2.1.1/
+ln -s /opt/hive/2.1.1 /opt/hive/current 
+   -> 심볼릭 링크 생성
+cd /opt/hive/current
+
+----------------------------- mysql 설치
+
+mysql -uroot -p비밀번호
+grant all privileges on *.* to hive@"%" identified by "hive" with grant option;
+flush privileges;
+quit
+systemctl restart mariadb.service
+
+----------------------------- mysql 권한설정
+
+chmod -R 775 /opt/hive/2.1.1/
+▶ vi /etc/profile
+#####HIVE#####
+export HIVE_HOME=/opt/hive/2.1.1
+export PATH=$PATH:$HIVE_HOME/bin
+#####HIVE#####
+source /etc/profile 
+
+cp /opt/hive/current/conf/hive-env.sh.template /opt/hive/current/conf/hive-env.sh
+
+▶ vi /opt/hive/current/conf/hive-env.sh
+HADOOP_HOME=/opt/hadoop/current
+
+cp /opt/hive/current/conf/hive-default.xml.template /opt/hive/current/conf/hive-site.xml
+
+▶ vi /opt/hive/current/conf/hive-site.xml   
+<property>
+   <name>javax.jdo.option.ConnectionURL</name>
+   <value>jdbc:mysql://master:3306/hive?createDatabaseIfNotExist=true</value>
+</property>
+<property>
+   <name>javax.jdo.option.ConnectionDriverName</name>
+   <value>com.mysql.jdbc.Driver</value>
+</property>
+<property>
+   <name>javax.jdo.option.ConnectionUserName</name>
+   <value>hive</value>
+   </property>
+<property>
+   <name>javax.jdo.option.ConnectionPassword</name>
+   <value>hive</value>
+</property>
+<property>
+   <name>hive.exec.local.scratchdir</name>
+   <value>/home/hadoop/iotmp</value>
+</property>
+<property>
+   <name>hive.downloaded.resources.dir</name>
+   <value>/home/hadoop/iotmp</value>
+</property>
+
+------------------------------- hive 설정파일 수정
+
+mkdir -p /home/hadoop/iotmp
+chmod -R 775 /home/hadoop/iotmp
+
+cd /tmp
+wget http://dev.mysql.com/get/Downloads/Connector-J/mysql-connector-java-5.1.38.tar.gz
+tar -xvzf mysql-connector-java-5.1.38.tar.gz
+cd mysql-connector-java-5.1.38
+mv mysql-connector-java-5.1.38-bin.jar /opt/hive/current/lib
+
+------------------------------- hive 관련 디렉토리 생성하고, mysql connector를 hive lib로 복사
+
+hdfs dfs -mkdir -p /tmp
+hdfs dfs -chmod g+w /tmp
+hdfs dfs -mkdir -p /user/hive/warehouse
+hdfs dfs -chmod g+w /user/hive/warehouse
+
+------------------------------- 하둡에 hive 기본 디렉토리 생성 및 권한 추가
+
+schematool -initSchema -dbType mysql 
+   -> 여기까지 하고나면 mysql -uhive -phive로 mysql 접속 가능하게 되고 hive database 생성됨
+   -> /opt/hive/current/bin 아래에 hive라는 hive 구동 파일이 있는데, 
+   환경변수로 잡아줬기 때문에 어디서든 hive를 입력하면 hive 구동할 수 있음
+
+-------------------------------- Hive 기본 스키마 생성
+
+////////////////// hive 실습 ////////////////////////////
+
+create database word_database;
+use word_database;
+create table wtable (line STRING);
+LOAD DATA LOCAL INPATH '/opt/hive/current/conf/hive-site.xml' overwrite into table wtable;
+   -> 이거 하면 hive-site.xml 파일이 라인 단위로 wtable에 들어감 ※ 원본 파일이 사라지지 않음. cp로 인식
+create table word_count as count from (select explode(split(line, '')) as word from wtable) w group by word order by word;
+   -> wtable에 있는 데이터들을 wordcount 연산하여 word_count 테이블에 저장
+
+--------------------------------- load data local (로컬에서 hive로 파일 복사해오기)
+
+drop database word_count cascade; 
+   -> 테이블 있는 데이터베이스 삭제할때 cascade 붙여줘야함
+create datbase word_database;
+use word_database;
+create table wtable(line STRING);
+   -> 외부 테이블 생성
+LOAD DATA INPATH '/input/README.txt' OVERWRITE INTO TABLE wtable;
+   -> 하둡 /input/README.txt 파일이 wtable에 불러와짐 ※ 하둡에서는 원본 파일 사라짐! mv로 인식
+drop table wtable;
+   -> wtable 지우기 (원본 README.txt 파일은 LOAD DATA 하는 순간 삭제됨)
+
+---------------------------------- load data (하둡에서 hive로 파일 이동해오기)
+
+[master에서 작업]
+create external table test (line STRING) LOCATION '/input/test';
+   -> 하둡 /input/test/README.txt 파일을 가리키는 외부 테이블 생성
+drop table test;
+   -> test 테이블을 삭제해도 원본 README.txt 파일은 사라지지 않음.
+
+----------------------------------- external table 생성
+
+[master에서 작업]
+▶ vi /etc/test.csv
+1,kj,25
+2,jb,27
+
+hdfs dfs -mkdir /info
+hdfs dfs -put /etc/test.csv /info
+
+------------------------------------ csv 테스트파일 생성
+
+create external table info 
+(id INT, name STRING, age INT)
+row format delimited 
+fields terminated by ',' 
+lines terminated by '\n'
+location '/info';
+   -> /info/test.csv 파일 데이터를 바라보는 external table 생성.
+   -> 안에 데이터는 1   kj   25
+          2   jb   27 이렇게 나옴!
+   -> ,로 필드 자르고, \n로 라인 잘라서 데이터 인식.
+
+-------------------------------------- csv 바라보는 external table 생성
+
+insert overwrite local directory '/root/' select id, name from info where 1=1;
+   -> 로컬 /root 밑에 000000_0라는 파일로 select된 결과가 복사됨.
+   -> vi 000000_0 으로 파일 내용 확인 가능
+
+-------------------------------------- select 결과 로컬로 export 하기
+
+select 컬럼 from 테이블 limit 숫자; 
+   -> 결과 개수 제한하여 select
+select distinct 컬럼 from 테이블;
+   -> 중복 결과 제거하여 select => mapreduce 수행
+select 컬럼1 + 컬럼2 from 테이블;
+   -> 컬럼 타입이 int일 경우 덧셈 수행 => mapreduce는 수행 x
+
+-------------------------------------- limit, distinct
+
+set hive.support.quoted.identifiers=none;
+   -> 아래 명령어 쓸수있게 설정
+select `(playerID|yearID)?+.+` from batting limit 10;
+   -> playerID, yearID 제외한 결과 출력
+
+-------------------------------------- 정규식 select
+
+select a.* from ( select yearID from batting where yearID >= 2000) a;
+   -> from 서브쿼리 a의 전체 결과 조회
+
+-------------------------------------- select 서브쿼리.* 
+
+select yearID, 
+case 
+when yearID < 1990 then 'low'
+when yearID >= 1990 and yearID < 2000 then 'middle'
+when yearID >= 2000 and yearID < 2010 then 'high'
+else 'very high'
+end as temp
+from batting;
+
+--------------------------------------- case
+
+select yearID from batting where yearID=2010
+union all
+select yeareID from batting where yearID=2009;
+   -> 중복된것도 같이 합침
+
+select yearID from batting where yearID=2010
+union
+select yeareID from batting where yearID=2009;
+   -> 중복된건 제거하고 합칩
+
+=> mapreduce 수행
+
+--------------------------------------- union, union all
+
+select yearID, lgID, sum(One_H) from batting
+group by yearID, lgID;
+   -> yearID, lgID로 묶은 One_H의 sum값이 select 됨
+
+select yearID, lgID, sum(One_H) as H from batting
+group by yearID, lgID
+having H < 10000;
+   -> One_H의 sum값이 10000 이하인 결과만 select
+
+select concat(yearID, lgID) as r, sum(One_H) as H from batting
+group by concat(yearID, lgID)
+having H < 10000;
+   -> yearID, lgID 문자 붙여서 출력
+
+=> mapreduce 수행
+
+--------------------------------------- group by, having
+
+select yearID from batting
+where cast (yearID as string) = '2010';
+   -> 컬럼 cast하여 연산 가능
+
+--------------------------------------- 타입 cast
+
+select a.name, a.age, b.gender
+from a left outer join b on (a.name = b.name);
+   -> a는 다 나오고, b는 겹치는 부분만 나옴 (a left join b)
+
+select a.name, a.age, b.gender
+from a right outer join b on (a.name = b.name);
+   -> b는 다 나오고, a는 겹치는 부분만 나옴 (a right join b)
+
+=> mapreduce 수행
+
+----------------------------------------
+
+1. 각 년도마다 홈런을 가장 많이 친 선수 (홈런 컬럼 HR)
+2. 20도루를 5년이상 달성한 타자 (도루 컬럼 SB)
+
+풀어보기!
+
+1. 
+select yearID, playerID, HR from batting a
+join
+select yearID, max(HR) from batting group by yearID b
+on (a.yearID=b.yearID and a.HR=b.HR);
+   -> 이거비슷한거인거 같은데 정답이 아님!!!!!!!!!!!!!!! 다시 풀어볼것
+
+2.
+select a.playerID, count(a.SB)
+from ( select yearID, playerID, SB from batting 
+group by yearID, playerID, SB
+having SB >= 20 ) a
+group by a.playerID
+having count(a.SB) > = 5;
+ 
+--------------------------------------- outer join
+
+create view emp as select yearID from batting where yearID = 2010;
+   -> view 생성
+select * from emp;
+   -> 별도의 쿼리 작성 없이 view에 저장한 조건대로 실행
+
+---------------------------------------- view
+
+explain select * from emp;
+   -> 쿼리 앞에 explain을 쓰면 하이브가 sql문을 어떻게 다루는지 설명 보여줌
